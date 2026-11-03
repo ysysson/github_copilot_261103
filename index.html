@@ -100,6 +100,17 @@
     .score-orb { display:grid; place-content:center; width:140px; height:140px; margin:24px auto; border:1px solid #a78bfa80; border-radius:50%; background:radial-gradient(circle at 35% 30%, #a78bfa35, #67e8f915 70%); box-shadow:0 0 48px #8b5cf733, inset 0 0 30px #a78bfa14; }
     .score-orb strong { font-size:2.4rem; line-height:1; }
     .score-orb span { margin-top:7px; color:var(--muted); font-size:.8rem; }
+    .history-panel { margin:24px 0; padding:18px; border:1px solid var(--line); border-radius:18px; background:#ffffff08; text-align:left; }
+    .history-panel h3 { margin:0 0 14px; font-size:1.05rem; }
+    .history-best { margin:0 0 16px; color:var(--muted); }
+    .history-best strong { color:var(--ink); }
+    .history-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+    .history-list li { display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:.88rem; line-height:1.5; }
+    .history-list strong { color:var(--ink); }
+    .history-empty, .history-status { color:var(--muted); font-size:.88rem; line-height:1.55; }
+    .history-status { min-height:1.5em; margin:12px 0 0; }
+    .history-clear { margin-top:16px; padding:8px 0; border:0; color:var(--cyan); text-decoration:underline; text-underline-offset:3px; background:transparent; cursor:pointer; }
+    .history-clear:focus-visible { outline:3px solid var(--cyan); outline-offset:3px; border-radius:4px; }
     .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     @keyframes twinkle { from { opacity:.35; } to { opacity:.8; } }
     @keyframes correctPop { 0% { transform:scale(.98); } 55% { transform:scale(1.025); } 100% { transform:scale(1); } }
@@ -175,6 +186,112 @@
     let score = 0;
     let answered = false;
     const selectedAnswers = Array(questions.length).fill(null);
+    const SCORE_HISTORY_KEY = "starlight-quiz-score-history-v1";
+    const MAX_RECENT_SCORES = 5;
+    let scoreHistory = loadScoreHistory();
+
+    function loadScoreHistory() {
+      try {
+        const saved = window.localStorage.getItem(SCORE_HISTORY_KEY);
+        if (!saved) return [];
+          const parsed = JSON.parse(saved);
+          const records = Array.isArray(parsed) ? parsed : parsed?.recent;
+          if (!Array.isArray(records)) return { bestScore: null, recent: [] };
+          const recent = records.filter(record =>
+          record && Number.isInteger(record.score) && record.score >= 0 && record.score <= questions.length &&
+          typeof record.completedAt === "string" && Number.isFinite(Date.parse(record.completedAt))
+        ).slice(0, MAX_RECENT_SCORES);
+          const storedBest = !Array.isArray(parsed) && Number.isInteger(parsed.bestScore) && parsed.bestScore >= 0 && parsed.bestScore <= questions.length
+            ? parsed.bestScore
+            : null;
+          const bestScore = recent.reduce((highest, record) => Math.max(highest, record.score), storedBest ?? 0);
+          return { bestScore: storedBest === null && recent.length === 0 ? null : bestScore, recent };
+      } catch {
+          return { bestScore: null, recent: [] };
+      }
+    }
+
+    function saveScoreHistory() {
+      try {
+        window.localStorage.setItem(SCORE_HISTORY_KEY, JSON.stringify(scoreHistory));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function createScoreHistoryPanel(initialStatus = "") {
+      const panel = document.createElement("section");
+      panel.className = "history-panel";
+      panel.setAttribute("aria-labelledby", "score-history-title");
+
+      const heading = document.createElement("h3");
+      heading.id = "score-history-title";
+      heading.textContent = "최고 점수와 최근 기록";
+      panel.append(heading);
+
+      const best = document.createElement("p");
+      best.className = "history-best";
+      best.append(document.createTextNode("최고 점수: "));
+      const bestValue = document.createElement("strong");
+      bestValue.textContent = scoreHistory.bestScore === null ? "기록 없음" : `${scoreHistory.bestScore} / ${questions.length}`;
+      best.append(bestValue);
+      panel.append(best);
+
+      if (scoreHistory.recent.length) {
+        const list = document.createElement("ol");
+        list.className = "history-list";
+        scoreHistory.recent.forEach((record, index) => {
+          const item = document.createElement("li");
+          const date = document.createElement("span");
+          date.textContent = `${index + 1}. ${new Date(record.completedAt).toLocaleString("ko-KR")}`;
+          const result = document.createElement("strong");
+          result.textContent = `${record.score} / ${questions.length}`;
+          item.append(date, result);
+          list.append(item);
+        });
+        panel.append(list);
+      } else {
+        const empty = document.createElement("p");
+        empty.className = "history-empty";
+        empty.textContent = "퀴즈를 완료하면 이 브라우저에 기록이 저장됩니다.";
+        panel.append(empty);
+      }
+
+      const status = document.createElement("p");
+      status.className = "history-status";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      status.textContent = initialStatus;
+      panel.append(status);
+
+      const clearButton = document.createElement("button");
+      clearButton.type = "button";
+      clearButton.className = "history-clear";
+      clearButton.textContent = "기록 지우기";
+      clearButton.disabled = scoreHistory.bestScore === null && scoreHistory.recent.length === 0;
+      clearButton.addEventListener("click", () => {
+        scoreHistory = { bestScore: null, recent: [] };
+        let removed = false;
+        try {
+          window.localStorage.removeItem(SCORE_HISTORY_KEY);
+          removed = true;
+        } catch {
+          removed = false;
+        }
+        bestValue.textContent = "기록 없음";
+        panel.querySelector(".history-list")?.remove();
+        panel.querySelector(".history-empty")?.remove();
+        const empty = document.createElement("p");
+        empty.className = "history-empty";
+        empty.textContent = "저장된 퀴즈 기록이 없습니다.";
+        panel.insertBefore(empty, status);
+        status.textContent = removed ? "기록을 모두 지웠습니다." : "기록은 이 화면에서 지웠지만 브라우저 저장소를 변경하지 못했습니다.";
+        clearButton.disabled = true;
+      });
+      panel.append(clearButton);
+      return panel;
+    }
 
     function renderQuestion() {
       const item = questions[current];
@@ -242,6 +359,9 @@
     function showResults() {
       quizView.hidden = true;
       resultView.hidden = false;
+      scoreHistory.recent = [{ score, completedAt: new Date().toISOString() }, ...scoreHistory.recent].slice(0, MAX_RECENT_SCORES);
+      scoreHistory.bestScore = Math.max(scoreHistory.bestScore ?? 0, score);
+      const historySaved = saveScoreHistory();
       const percentage = Math.round((score / questions.length) * 100);
       let emoji = "🌱", title = "멋진 첫 탐사였어요!", message = "새로운 발견은 이제부터예요. 다시 도전해서 우주 지식을 더 넓혀 볼까요?";
       if (score >= 9) { emoji = "🏆"; title = "우주 지식 만점에 가까워요!"; message = "대단해요! 별빛 탐사대 최고의 우주 전문가로 임명합니다."; }
@@ -255,6 +375,7 @@
       const scoreText = document.createElement("strong"); scoreText.textContent = `${score} / ${questions.length}`;
       const scoreLabel = document.createElement("span"); scoreLabel.textContent = `정답률 ${percentage}%`;
       orb.append(scoreText, scoreLabel);
+      const historyPanel = createScoreHistoryPanel(historySaved ? "이번 퀴즈 결과를 기록에 저장했습니다." : "브라우저 저장소를 사용할 수 없어 이번 기록은 새로고침 후 유지되지 않습니다.");
       const restart = document.createElement("button"); restart.type = "button"; restart.className = "action"; restart.textContent = "다시 탐사하기 ↻";
       restart.addEventListener("click", () => {
         current = 0; score = 0; selectedAnswers.fill(null); resultView.hidden = true; reviewView.hidden = true; reviewView.replaceChildren(); quizView.hidden = false;
@@ -264,7 +385,7 @@
       reviewButton.addEventListener("click", showReview);
       const actions = document.createElement("div"); actions.className = "result-actions";
       actions.append(reviewButton, restart);
-      resultView.append(icon, heading, paragraph, orb, actions);
+      resultView.append(icon, heading, paragraph, orb, historyPanel, actions);
       heading.focus?.();
     }
 
